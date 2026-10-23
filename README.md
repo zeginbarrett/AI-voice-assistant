@@ -1,74 +1,109 @@
 # SAM — Hands-Free Local AI Voice Assistant
 
-**A DIY female-voiced smart speaker using the Waveshare ESP32-S3-AUDIO-Board and a Windows PC.** No Home Assistant account or cloud LLM subscription is required for the baseline setup.
+**Build a hands-free AI smart speaker with the Waveshare ESP32-S3-AUDIO-Board and a Windows PC.** SAM listens for a wake phrase, processes speech locally and speaks back using **a voice chosen by the user**. It is not tied to a particular voice or gender. No Home Assistant account or cloud LLM subscription is required for the baseline setup.
 
-> **Project status:** Early community release / hardware-tested prototype. The original v4 standard-I²S microphone path and the v5 Windows speech pipeline have worked on one physical Waveshare board. Hardware, installer, SD music and voice-cloning features may need adjustment on other PCs. This is **not** a turnkey commercial product.
+> **Project status:** Early community release / hardware-tested prototype. The original v4 standard-I²S microphone path and the v5 Windows speech pipeline have worked on one physical Waveshare board. Installation, microSD music and optional voice-model features may need adjustment on other PCs. This is **not** a turnkey commercial product.
+
+## Meet the hardware
+
+<p align="center">
+  <img src="https://productimages.microcenter.com/702167_932723_01_front_comping.jpg" alt="Waveshare ESP32-S3 AI Smart Speaker board: frosted round top, visible connectors, black cylindrical body" width="345">
+  &nbsp;
+  <img src="https://www.tiendatec.es/14114-large_default/altavoz-inteligente-ia-con-esp32-s3-microfono-dual-reduccion-de-ruido-luz-rgb.jpg" alt="Waveshare ESP32-S3 AI Smart Speaker board: speaker-grille side" width="345">
+</p>
+
+<p align="center"><sub>Waveshare ESP32-S3-AUDIO-Board, shown from two sides. Product photographs: <a href="https://www.microcenter.com/product/702167/waveshare-esp32-s3-ai-smart-speaker-development-board">Micro Center</a> and <a href="https://www.tiendatec.es/maker-zone/microcontroladores/2679-altavoz-inteligente-ia-con-esp32-s3-microfono-dual-reduccion-de-ruido-luz-rgb.html">TiendaTec</a>.</sub></p>
+
+The board supplies dual microphones, the speaker connection, an RGB light ring and a microSD slot. A Windows PC does the heavier speech-recognition, AI and voice-synthesis work.
+
+## How SAM works
+
+```mermaid
+flowchart TB
+    U(["🗣️ You say: Hey Sam"]) --> MIC["🎙️ ESP32-S3 microphones"]
+    MIC -->|"16 kHz microphone audio · TCP 8766"| WIN["🖥️ Windows PC voice bridge"]
+    WIN --> STT["Wake phrase + faster-whisper"]
+    STT --> ROUTE{"What did you ask?"}
+    ROUTE -->|"Music, volume, time"| CMD["Local commands"]
+    ROUTE -->|"Conversation"| LLM["Ollama · local Qwen model"]
+    CMD --> TTS["🔊 Your selected voice<br/>Windows SAPI / Piper / optional Chatterbox"]
+    LLM --> TTS
+    TTS -->|"16 kHz WAV · HTTP 8765"| OUT["ESP32-S3 speaker"]
+    OUT --> U
+
+    SD[("💾 Optional microSD MP3s")] -->|"Files · HTTP 8770"| MUSIC["Windows FFmpeg + music queue"]
+    MUSIC -->|"16 kHz PCM · TCP 8771"| OUT
+
+    classDef device fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef pc fill:#f3e8ff,stroke:#7c3aed,color:#0f172a
+    classDef voice fill:#dcfce7,stroke:#16a34a,color:#0f172a
+    class MIC,OUT,SD device
+    class WIN,STT,ROUTE,CMD,LLM,MUSIC pc
+    class TTS voice
+```
+
+**In plain language:** your voice travels from the ESP32 to the Windows PC over your private Wi-Fi network. The PC recognizes the request, handles it with a local command or local AI model, synthesizes speech with **your chosen voice**, and sends the audio back to the device. See [the full architecture](docs/ARCHITECTURE.md).
 
 ## What SAM can do
 
-- **Hands-free:** say *“Hey Sam”* without touching buttons; an optional K2 diagnostic button remains.
-- **Converse:** remember recent dialogue and listen automatically for follow-up questions after each reply.
-- **Understand locally:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) transcribes 16 kHz microphone audio.
-- **Think locally:** [Ollama](https://ollama.com/) runs a Qwen-based conversational model on the Windows machine.
-- **Speak:** built-in Windows female SAPI voices, optional [Piper](https://github.com/rhasspy/piper) neural voices, or an optional Chatterbox cloned voice if you have permission.
-- **Play music:** read MP3s from a FAT32 microSD card in the Waveshare, decode on Windows with FFmpeg, and stream PCM back to the speaker.
-- **Control volume by voice:** *“volume up”*, *“volume down”*, *“set volume to 40 percent”*, *“mute”*, *“unmute”*.
-- **Control music by voice:** play, shuffle, skip, pause, resume, stop.
+- **Hands-free listening:** say *“Hey Sam”*; an optional K2 diagnostic button remains.
+- **Follow-up conversation:** remember recent turns and listen for another question during a short follow-up window after a reply.
+- **Local speech recognition:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) transcribes microphone audio on the Windows PC.
+- **Local AI conversation:** [Ollama](https://ollama.com/) runs a Qwen-based model on the PC.
+- **Choose your voice:** select an available Windows SAPI voice, an optional [Piper](https://github.com/rhasspy/piper) model, or a custom voice through the experimental Chatterbox path (with consent).
+- **Music from microSD:** index MP3 files, decode with FFmpeg on Windows, and stream playback to the speaker.
+- **Voice music controls:** play, shuffle, skip, pause, resume and stop.
+- **Voice volume controls:** *“volume up”*, *“volume down”*, *“set volume to 40 percent”*, *“mute”* and *“unmute”*.
+
+## Choose SAM's voice
+
+**The voice is your choice.** SAM does not require any particular voice model, and a cloned voice is optional.
+
+1. Start with an installed Windows SAPI voice, or install one of the supported optional voice engines.
+2. Run **`CHOOSE_SAM_VOICE.bat`** to select an available voice or configure an optional model.
+3. For advanced custom voice synthesis, see [voice setup and optional cloning](docs/VOICES.md). Only synthesize a person's voice when you have permission.
+
+The exact voices available depend on your Windows installation and the models you install.
 
 ## Start here
 
-**Hardware:** Waveshare ESP32-S3-AUDIO-Board, compatible speaker and a Windows 10/11 PC on the same private 2.4 GHz Wi-Fi network. A FAT32 microSD card is optional for music.
+**You'll need:** a Waveshare ESP32-S3-AUDIO-Board, compatible speaker, and Windows 10/11 PC on the same trusted 2.4 GHz Wi-Fi network. A FAT32 microSD card is optional for music.
 
-1. Read **[First-time installation](docs/INSTALL.md)** before flashing. This repository includes the *working-v5 upgrade installer*, which recovers configuration from an earlier SAM install; first-time users need to prepare Python, Arduino CLI and local configuration as described there.
-2. Install [Ollama](https://ollama.com/), pull the model (`ollama pull qwen3.5:4b`) and keep Ollama running.
-3. Use the Windows installer scripts to configure and flash your ESP32. After the first flash, double-click **`START_SAM.bat`** to start the bridge without reflashing.
-4. Say **“Hey Sam”**, then ask something. After the answer, respond normally without another wake phrase while the follow-up window is open.
+1. Read **[First-time installation](docs/INSTALL.md)** before flashing. The included working-v5 upgrade installer can recover configuration from an older SAM installation; first-time setup requires the prerequisites and local configuration explained there.
+2. Install [Ollama](https://ollama.com/), run `ollama pull qwen3.5:4b`, and keep Ollama running.
+3. Use the provided Windows scripts to configure and flash the ESP32. After the first flash, run **`START_SAM.bat`** to start the bridge without reflashing.
+4. Select your preferred voice using **`CHOOSE_SAM_VOICE.bat`**.
+5. Say **“Hey Sam”** and ask a question. During the follow-up window, you can ask another question without repeating the wake phrase.
 
-### Quick voice commands
+### Example voice commands
 
 | Say | Expected action |
 | --- | --- |
 | “Hey Sam, what time is it?” | Read the Windows PC clock |
 | “Hey Sam, tell me a joke.” | Ask the local Ollama model |
-| “And another one.” | Follow-up conversation (within ~12 seconds) |
-| “Hey Sam, play some music.” | Shuffle the SD library |
-| “Hey Sam, play Queen.” | Match artist/title against MP3 filename |
-| “Next song.” / “Pause music.” | Music control |
-| “Set volume to 40 percent.” | Hardware speaker volume |
-
-## Architecture
-
-```text
-         WAVESHARE ESP32-S3 AUDIO BOARD             WINDOWS PC
-  +--------------------------------------+  +------------------------------+
-  | Dual microphones -> ES7210 16-bit    |  | Whisper / wake phrase        |
-  | ESP32 I2S clock master @ 16 kHz      |==| Streaming speech recognition |
-  | Mic audio -> TCP 8766               |  | Ollama (Qwen)                |
-  | Speaker <- ES8311 <- 16 kHz PCM     |<=| Female TTS engine            |
-  | MicroSD MP3 library on TCP 8770     |=>| FFmpeg MP3 decoder            |
-  | Music PCM sink on TCP 8771          |<=| Music queue / voice commands |
-  | RGB ring, K2 optional diagnostics   |  | Local session / follow-ups   |
-  +--------------------------------------+  +------------------------------+
-           PRIVATE WI-FI LAN ONLY — no TLS
-```
-
-The PC does speech, reasoning and voice generation; the ESP32 handles the microphone, speaker, ring and microSD interface. See **[How SAM works](docs/ARCHITECTURE.md)**.
+| “And another one.” | Continue the conversation during the ~12-second follow-up window |
+| “Hey Sam, play some music.” | Shuffle the microSD music library |
+| “Hey Sam, play Queen.” | Search the MP3 filenames for artist/title |
+| “Next song.” / “Pause music.” | Control music playback |
+| “Set volume to 40 percent.” | Set speaker volume |
 
 ## Documentation
 
 - [Installation and setup](docs/INSTALL.md)
 - [Board pins and microSD](docs/HARDWARE.md)
-- [How the audio and AI pipeline works](docs/ARCHITECTURE.md)
+- [Audio and AI workflow](docs/ARCHITECTURE.md)
 - [Music playback](docs/MUSIC.md)
-- [Female and cloned voices](docs/VOICES.md)
+- [Choosing your voice and optional cloning](docs/VOICES.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Security and voice consent](SECURITY.md)
 
-## Privacy / important warnings
+## Privacy and important warnings
 
-Never commit **`sam_config.h`**, **`windows/settings.json`**, Wi-Fi credentials, shared tokens, voice recordings, `.venv`, or neural model weights. They are excluded from this public release. Audio/control streams on the LAN are **not encrypted**; use only on your trusted network and do not expose ports to the Internet.
+SAM's baseline recognition, reasoning and speech synthesis run locally **after required model downloads**, but its LAN audio/control streams are **not encrypted**. Use only on a trusted private network; do not expose ports to the Internet. The Windows PC must remain powered on for normal operation.
+
+Never commit **`sam_config.h`**, **`windows/settings.json`**, Wi-Fi passwords, shared tokens, voice recordings, virtual environments or neural model weights. They are excluded from this public release.
 
 ## License and credits
 
-This repository uses the existing [GNU GPL v3 license](LICENSE). Uses the work of the ESPHome, Espressif, Arduino, Whisper, Ollama, Piper, FFmpeg and Chatterbox projects; their own code, model files and licenses remain with their respective authors. SAM is an independent community project, not an official Waveshare, OpenAI, Ollama or ESPHome product.
+Licensed under the existing [GNU GPL v3](LICENSE). SAM builds on work from ESPHome, Espressif, Arduino, Whisper, Ollama, Piper, FFmpeg and Chatterbox; their software, model files and licenses remain with their respective authors. SAM is an independent community project, not an official Waveshare, OpenAI, Ollama or ESPHome product.
