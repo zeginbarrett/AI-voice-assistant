@@ -7,14 +7,13 @@
 ## Meet the hardware
 
 <p align="center">
-  <img src="https://productimages.microcenter.com/702167_932723_01_front_comping.jpg" alt="Waveshare ESP32-S3 AI Smart Speaker board: frosted round top, visible connectors, black cylindrical body" width="345">
-  &nbsp;
-  <img src="https://www.tiendatec.es/14114-large_default/altavoz-inteligente-ia-con-esp32-s3-microfono-dual-reduccion-de-ruido-luz-rgb.jpg" alt="Waveshare ESP32-S3 AI Smart Speaker board: speaker-grille side" width="345">
+  <a href="https://www.waveshare.com/product/mcu-tools/development-boards/esp32-s3-audio-board.htm">
+    <img src="https://www.waveshare.net/photo/development-board/ESP32-S3-AUDIO-Board/ESP32-S3-AUDIO-Board-1.jpg" alt="Waveshare ESP32-S3-AUDIO-Board upright, with the frosted circuit-board cover on top and black speaker enclosure below" width="470">
+  </a>
 </p>
+<p align="center"><sub>Correct upright orientation: translucent circuit-board cover and microphones on top; black speaker housing below. Image: <a href="https://www.waveshare.com/product/mcu-tools/development-boards/esp32-s3-audio-board.htm">Waveshare official product photo</a>.</sub></p>
 
-<p align="center"><sub>Waveshare ESP32-S3-AUDIO-Board, shown from two sides. Product photographs: <a href="https://www.microcenter.com/product/702167/waveshare-esp32-s3-ai-smart-speaker-development-board">Micro Center</a> and <a href="https://www.tiendatec.es/maker-zone/microcontroladores/2679-altavoz-inteligente-ia-con-esp32-s3-microfono-dual-reduccion-de-ruido-luz-rgb.html">TiendaTec</a>.</sub></p>
-
-The board supplies dual microphones, the speaker connection, an RGB light ring and a microSD slot. A Windows PC does the heavier speech-recognition, AI and voice-synthesis work.
+The board combines dual microphones, speaker output, a programmable RGB light ring and microSD storage. A Windows PC performs speech recognition, AI and voice synthesis. See the [Waveshare board reference](https://docs.waveshare.com/ESP32-S3-AUDIO-Board) for additional photos and the exposed PCB.
 
 ## How SAM works
 
