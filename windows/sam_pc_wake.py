@@ -4,9 +4,9 @@ assistant replies as 16k PCM WAV to the Waveshare speaker. Trusted LAN only.
 """
 from __future__ import annotations
 import collections
-from datetime import datetime
 import sam_music
 import sam_voice
+import sam_clock
 import hmac
 import json
 import logging
@@ -124,7 +124,7 @@ def is_wake(text):
 
 def ollama(prompt):
     global _CHAT_HISTORY
-    messages = [{'role': 'system', 'content': PERSONA}] + _CHAT_HISTORY[-8:]
+    messages = [{'role': 'system', 'content': PERSONA + '\n' + sam_clock.context()}] + _CHAT_HISTORY[-8:]
     messages.append({'role': 'user', 'content': prompt})
     body = {
         'model': MODEL_CONFIG['ollama_model'], 'messages': messages,
@@ -157,8 +157,9 @@ def response_for(text):
             # Music must start after TTS; no open mic feeding its own speaker.
             new_music=re.search(r'\b(?:play|shuffle)\s+', text, re.I) is not None
             return local, not new_music
-    if re.search(r'\b(?:what(?:\'s| is) the time|what time is it|tell me the time|current time)\b',text,re.I):
-        return 'It is '+datetime.now().strftime('%I:%M %p').lstrip('0')+'.',True
+    clock_reply = sam_clock.reply_for(text)
+    if clock_reply is not None:
+        return clock_reply, True
     return ollama(text),True
 
 

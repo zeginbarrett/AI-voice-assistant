@@ -49,6 +49,7 @@ flowchart TB
 - **Follow-up conversation:** remember recent turns and listen for another question during a short follow-up window after a reply.
 - **Local speech recognition:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) transcribes microphone audio on the Windows PC.
 - **Local AI conversation:** [Ollama](https://ollama.com/) runs a Qwen-based model on the PC.
+- **Real local date and time:** Common clock/day/date questions read the Windows PC clock directly, while Ollama receives a new local timestamp (including UTC offset) for every request. Set the correct time zone in Windows; reminder scheduling is not currently implemented.
 - **Choose your voice:** select an available Windows SAPI voice, an optional [Piper](https://github.com/rhasspy/piper) model, or a custom voice through the experimental Chatterbox path (with consent).
 - **Music from microSD:** index MP3 files, decode with FFmpeg on Windows, and stream playback to the speaker.
 - **Voice music controls:** play, shuffle, skip, pause, resume and stop.
