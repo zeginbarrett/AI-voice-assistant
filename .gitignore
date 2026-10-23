@@ -1,0 +1,34 @@
+# Personal Wi-Fi and voice assistant secrets: never commit
+SAM_PC_Wake/sam_config.h
+windows/settings.json
+windows/voice_before_clone.json
+windows/python_path.txt
+**/.env
+**/*.secret
+**/secrets.json
+# Local voice recordings, generated speech, caches and model downloads
+*.wav
+*.mp3
+*.onnx
+*.onnx.json
+*.safetensors
+*.pt
+*.pth
+*.bin
+windows/voices/
+windows/tools/
+optional/voice_clone/engine/sam_reference.wav
+windows/clone_server.log
+# Python, Arduino builds and logs
+**/__pycache__/
+*.pyc
+.venv/
+.sam_clone_env/
+windows/.venv/
+**/.venv/
+build/
+logs/
+*.log
+# Local machine metadata
+.DS_Store
+Thumbs.db

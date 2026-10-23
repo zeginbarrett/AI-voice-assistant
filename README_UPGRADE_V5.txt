@@ -1,0 +1,1 @@
+Original project scripts were developed as an upgrade to the working SAM standalone prototype. See README.md and docs/INSTALL.md for important first-time setup requirements. No personal configuration is included.

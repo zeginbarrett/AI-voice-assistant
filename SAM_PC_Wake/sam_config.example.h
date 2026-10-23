@@ -1,0 +1,7 @@
+#pragma once
+#define SAM_WIFI_SSID "YOUR_WIFI"
+#define SAM_WIFI_PASS "SET_LOCALLY"
+#define SAM_PC_IP "192.168.1.100"
+#define SAM_PC_PORT 8765
+#define SAM_STREAM_PORT 8766
+#define SAM_TOKEN "SET_LOCALLY"
