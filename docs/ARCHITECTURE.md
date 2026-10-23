@@ -9,7 +9,7 @@ SAM is two cooperating programs: a continuously running ESP32 firmware and a Win
 3. **faster-whisper** runs offline on the Windows machine, identifying “Hey Sam” from the continuous microphone stream. K2 can manually trigger listening for diagnostics.
 4. The next utterance is transcribed. A rolling buffer allows some immediate speech after the wake phrase; the bridge rejects characteristic Whisper repetitive hallucinations when possible.
 5. Local commands (time, music, volume) are handled directly; free-form questions are sent to **Ollama** `http://127.0.0.1:11434/api/chat` with recent turns as context.
-6. The answer is converted to a 16 kHz WAV by the selected female TTS engine: Windows SAPI, optional Piper, or opt-in Chatterbox.
+6. The answer is converted to a 16 kHz WAV by the user's selected voice engine and model: an available Windows SAPI voice, optional Piper, or opt-in Chatterbox custom voice.
 7. A local HTTP reply on **8765** tells the ESP32 to play the WAV through ES8311. After speaking, Windows opens a follow-up window of ~12 seconds so no second wake phrase is needed.
 
 ### Music
