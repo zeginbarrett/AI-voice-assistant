@@ -7,6 +7,7 @@ import collections
 import sam_music
 import sam_voice
 import sam_clock
+import sam_alarms
 import hmac
 import json
 import logging
@@ -38,11 +39,13 @@ _WHISPER_LOCK = threading.Lock()
 _CHAT_HISTORY = []
 MODEL_CONFIG = {}
 MUSIC = None
+ALARMS = None
 
 PERSONA = ('You are SAM, an upbeat, capable, witty, intelligent female voice assistant. '
            'Speak in natural conversational English, usually 1-3 short sentences. '
            'You can have an extended natural conversation across several turns. Answer direct questions directly, including telling a joke when asked. '
-           'Avoid markdown, emoji and stage directions. If unsure, say so.')
+           'Avoid markdown, emoji and stage directions. If unsure, say so. '
+           'Alarms are handled by the local SAM scheduler. Never claim an alarm is scheduled unless the scheduler confirms it.')
 
 
 def model():
@@ -151,6 +154,14 @@ def tts(message):
 
 def response_for(text):
     """Route hardware/media commands locally and return (spoken_reply,followup)."""
+    if ALARMS is not None:
+        try:
+            alarm_reply = ALARMS.handle(text)
+        except (OSError, ValueError) as exc:
+            LOG.exception('ALARM STORAGE FAILED: %s', exc)
+            return 'I could not save or change that alarm. Check the Windows log.', True
+        if alarm_reply is not None:
+            return alarm_reply, True
     if MUSIC is not None:
         local = sam_music.parse_command(text, MUSIC)
         if local is not None:
@@ -186,6 +197,7 @@ class Session:
         self.last_scan=0.0
         self.connected=True
         self.reply=None
+        self.is_alarm_reply=False
         self.last_diag=0.0
         self.worker=threading.Thread(target=self.watch,daemon=True,name='sam-wake')
         self.worker.start()
@@ -298,13 +310,19 @@ class Session:
             LOG.exception('QUESTION ERROR: %s',exc)
             self._recover()
 
-    def _speak_answer(self,text,override=None):
+    def _speak_answer(self,text,override=None,alarm=False):
         try:
             reply,followup=(override,True) if override else response_for(text)
             self.keep_followup=followup
             LOG.info('HEARD: %r',text)
             LOG.info('SAM: %s',reply)
-            self.reply=tts(reply)
+            audio_reply=tts(reply)
+            if alarm:
+                audio_reply=sam_alarms.alarm_chime(audio_reply)
+            self.reply=audio_reply
+            self.is_alarm_reply=alarm
+            if alarm and MUSIC is not None:
+                self.send(b'G' + bytes([max(80, MUSIC.volume)]))
             LOG.info('TTS: %.1f KiB; starting reply',len(self.reply)/1024)
             with self.frames_lock:self.state='REPLY'
             self.send(b'P')
@@ -315,10 +333,17 @@ class Session:
     def _recover(self):
         with self.frames_lock:self.state='IDLE';self.question.clear()
         self.reply=None
+        self.is_alarm_reply=False
+        if MUSIC is not None:
+            self.send(b'G' + bytes([MUSIC.volume]))
         self.send(b'E')
 
     def close_reply(self):
         self.reply=None
+        if self.is_alarm_reply:
+            self.is_alarm_reply=False
+            if MUSIC is not None:
+                self.send(b'G' + bytes([MUSIC.volume]))
         with self.frames_lock:
             self.question.clear()
             self.last_scan=time.monotonic()
@@ -489,14 +514,45 @@ class HTTPHandler(BaseHTTPRequestHandler):
         self.reply(200,sess.reply,'audio/wav')
 
 
+def alarm_loop():
+    """Use the existing ESP32 reply path; do not require new firmware."""
+    while True:
+        try:
+            if ALARMS is not None:
+                ALARMS.poll()
+                if ALARMS.should_ring():
+                    with LOCK:
+                        sess=CURRENT
+                    ready=False
+                    if sess is not None and sess.connected:
+                        with sess.frames_lock:
+                            if sess.state in ('IDLE', 'LISTEN') and not sess.speech_started:
+                                sess.state='THINK'
+                                sess.question.clear()
+                                ready=True
+                    if ready:
+                        label=ALARMS.mark_ring()
+                        if label is not None:
+                            if MUSIC is not None and MUSIC.playing:
+                                MUSIC.pause()
+                            spoken=f'Alarm! {label}. Say stop alarm or snooze for 10 minutes.'
+                            threading.Thread(target=sess._speak_answer,
+                                args=('',), kwargs={'override':spoken, 'alarm':True},
+                                daemon=True, name='sam-alarm-alert').start()
+        except Exception as exc:
+            LOG.exception('ALARM LOOP ERROR: %s',exc)
+        time.sleep(1)
+
+
 def main():
-    global MODEL_CONFIG, MUSIC
+    global MODEL_CONFIG, MUSIC, ALARMS
     settings=ROOT/'settings.json'
     if not settings.exists():raise RuntimeError('Missing settings.json; run RUN_SAM_TEST.bat')
     MODEL_CONFIG=json.loads(settings.read_text(encoding='utf-8'))
     if not MODEL_CONFIG.get('token') or not MODEL_CONFIG.get('ollama_model'):
         raise RuntimeError('Missing authentication or Ollama model in settings.json')
     MUSIC=sam_music.MusicPlayer(MODEL_CONFIG['token'])
+    ALARMS=sam_alarms.AlarmManager(ROOT/'sam_alarms.json')
     MUSIC.volume=max(0,min(100,int(MODEL_CONFIG.get('speaker_volume',75))))
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',datefmt='%H:%M:%S')
     LOG.info('SAM V5 | Hands-free follow-up + voice volume + microSD music | v4 16kHz I2S')
@@ -508,6 +564,7 @@ def main():
     LOG.info('Every 9s: LIVE MIC stereo levels and WAV recordings; no buttons required')
     LOG.info('Private LAN only: audio and voice replies are NOT encrypted')
     port=int(MODEL_CONFIG.get('port',8765));stream_port=int(MODEL_CONFIG.get('stream_port',8766))
+    threading.Thread(target=alarm_loop,daemon=True,name='sam-alarm-scheduler').start()
     listener=StreamServer(('0.0.0.0',stream_port),StreamHandler)
     threading.Thread(target=listener.serve_forever,daemon=True).start()
     LOG.info('Audio stream TCP 0.0.0.0:%d | Reply HTTP 0.0.0.0:%d',stream_port,port)

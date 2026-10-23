@@ -1,6 +1,9 @@
 # Personal Wi-Fi and voice assistant secrets: never commit
 SAM_PC_Wake/sam_config.h
 windows/settings.json
+# Local alarms are personal data, not public repository content
+windows/sam_alarms.json
+windows/.sam_alarms_*.tmp
 windows/voice_before_clone.json
 windows/python_path.txt
 **/.env

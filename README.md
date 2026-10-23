@@ -49,11 +49,29 @@ flowchart TB
 - **Follow-up conversation:** remember recent turns and listen for another question during a short follow-up window after a reply.
 - **Local speech recognition:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) transcribes microphone audio on the Windows PC.
 - **Local AI conversation:** [Ollama](https://ollama.com/) runs a Qwen-based model on the PC.
-- **Real local date and time:** Common clock/day/date questions read the Windows PC clock directly, while Ollama receives a new local timestamp (including UTC offset) for every request. Set the correct time zone in Windows; reminder scheduling is not currently implemented.
+- **Real local date and time:** Common clock/day/date questions read the Windows PC clock directly, while Ollama receives a new local timestamp (including UTC offset) for every request. Set the correct time zone in Windows.
+- **Voice alarms and timers:** Schedule one-time, relative, daily, weekday, weekend, or specified-weekday alarms; list/cancel them, stop a ringing alarm, or snooze it. Alarms are saved locally across restarts and ring through the ESP32 using a chime plus the configured voice. No firmware flash required.
 - **Choose your voice:** select an available Windows SAPI voice, an optional [Piper](https://github.com/rhasspy/piper) model, or a custom voice through the experimental Chatterbox path (with consent).
 - **Music from microSD:** index MP3 files, decode with FFmpeg on Windows, and stream playback to the speaker.
 - **Voice music controls:** play, shuffle, skip, pause, resume and stop.
 - **Voice volume controls:** *“volume up”*, *“volume down”*, *“set volume to 40 percent”*, *“mute”* and *“unmute”*.
+
+## Voice alarms (Windows-side)
+
+SAM's alarm scheduler uses the Windows PC clock, **not an LLM promise**. Alarms are stored in `windows/sam_alarms.json` (gitignored) and survive restarts. At the scheduled time, SAM plays a three-tone chime and a spoken alarm through the existing ESP32 reply path. She repeats the chime and message about every 20 seconds for up to five minutes, leaving gaps to hear voice commands.
+
+Example things to say:
+
+- “Hey Sam, set an alarm for 6:30 AM.”
+- “Set an alarm every weekday at 6 AM.”
+- “Set an alarm every Friday at 5:30 AM.”
+- “Wake me up tomorrow at 7 AM.”
+- “Set a timer for 10 minutes.”
+- “List my alarms.”
+- “Cancel alarm number one.” or “Cancel all alarms.”
+- When the alarm rings: “Stop alarm.” or “Snooze for ten minutes.”
+
+A scheduled alarm is only confirmed after being saved. Ambiguous clock times require AM or PM. Alarm sounds are delivered through the PC's connected speaker board; the PC **must remain awake and SAM must be running**. If the board disconnects, the scheduler attempts delivery after reconnecting; old one-time alarms more than 30 minutes overdue are skipped. The alarm chime uses the normal speaker stream, without changing ESP32 firmware. Alarm notifications are not sent to a phone, and this is not a general-purpose reminders/calendar service. Test the alarm before relying on it for important wakeups.
 
 ## Choose SAM's voice
 
