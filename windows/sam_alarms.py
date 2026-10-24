@@ -42,19 +42,65 @@ def _duration(text):
     return timedelta(seconds=seconds) if 0 < seconds <= 365 * 86400 else None
 
 
-def _clock_time(text):
-    if re.search(r'\b(?:at|for)\s+noon\b', text):
-        return (12, 0)
-    if re.search(r'\b(?:at|for)\s+midnight\b', text):
-        return (0, 0)
-    m = CLOCK.search(text)
-    if not m:
-        return None
-    hour, minute = int(m.group(1)), int(m.group(2) or 0)
-    if not 1 <= hour <= 12 or minute > 59:
-        return None
-    period = m.group(3).replace('.', '').lower()
-    return hour % 12 + (12 if period == 'pm' else 0), minute
+def _clock_time(text, now=None, days=None, tomorrow=False):
+    """Accept spoken/digit clock times, choosing next AM or PM if unspecified."""
+    q = _normal(text)
+    if re.search(r'\b(?:at|for|by)\s+noon\b', q): return (12, 0)
+    if re.search(r'\b(?:at|for|by)\s+midnight\b', q): return (0, 0)
+    q = re.sub(r'(?<![a-z])([ap])\s*\.?\s*m\.?(?![a-z])',
+               lambda m: ' ' + m.group(1) + 'm ', q, flags=re.I)
+    q = re.sub(r'\s+', ' ', q).strip(' .!?')
+    m = re.search(r'\b(?:at|for|by)\s+'
+                  r'(?P<clock>\d{1,4}(?:(?:\s*[:.]\s*|\s+)\d{1,2})?)'
+                  r'\s*(?P<period>am|pm)?(?!\s*\d)(?=$|[\s,!?;.])', q, re.I)
+    period = None
+    parsed = None
+    if m:
+        raw = m.group('clock').strip()
+        if re.search(r'[:.\s]', raw):
+            parts = re.split(r'\s*[:.]\s*|\s+', raw)
+            if len(parts) == 2: parsed = (int(parts[0]), int(parts[1]))
+        elif len(raw) in (3, 4):
+            parsed = (int(raw[:-2]), int(raw[-2:]))
+        else:
+            parsed = (int(raw), 0)
+        period = m.group('period')
+    else:
+        # Whisper may render the same time as "six thirty five".
+        spoken = re.search(
+            r'\b(?:at|for|by)\s+'
+            r'(?P<clock>[a-z]+(?:[-\s]+[a-z]+){0,4}?)'
+            r'(?:\s+(?P<period>am|pm))?'
+            r'(?=$|\s+(?:tomorrow|today|every|on|this|please)\b|[,.!?;])',
+            q, re.I)
+        if spoken:
+            terms = spoken.group('clock').replace('-', ' ').split()
+            values = {'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,
+                      'seven':7,'eight':8,'nine':9,'ten':10,'eleven':11,'twelve':12,
+                      'thirteen':13,'fourteen':14,'fifteen':15,'sixteen':16,
+                      'seventeen':17,'eighteen':18,'nineteen':19,'twenty':20,
+                      'thirty':30,'forty':40,'fifty':50,'oh':0,'zero':0}
+            if terms and terms[0] in values:
+                h = values[terms[0]]
+                rest = terms[1:]
+                if not rest or rest in (['oclock'], ['o','clock']): minute = 0
+                elif len(rest) == 1 and rest[0] in values: minute = values[rest[0]]
+                elif len(rest) == 2 and all(t in values for t in rest):
+                    minute = values[rest[0]] + values[rest[1]]
+                else: minute = -1
+                parsed=(h,minute)
+                period=spoken.group('period')
+    if parsed is None: return None
+    hour,minute=parsed
+    if not 0 <= minute <= 59: return None
+    if period:
+        if not 1 <= hour <= 12: return None
+        return hour % 12 + (12 if period == 'pm' else 0), minute
+    if hour == 0 or 13 <= hour <= 23: return hour,minute
+    if not 1 <= hour <= 12: return None
+    reference=now if now is not None else datetime.now()
+    options=[hour % 12, hour % 12 + 12]
+    return min(options, key=lambda h: _next_clock(reference,h,minute,days,tomorrow)),minute
 
 
 def _recurrence(text):
@@ -208,9 +254,9 @@ class AlarmManager:
                 if _recurrence(q):
                     return 'For a repeating alarm, please specify a clock time with AM or PM.'
                 return self._add(now + delta)
-            parsed = _clock_time(q)
+            parsed = _clock_time(q, now=now, days=_recurrence(q), tomorrow=bool(re.search(r'\btomorrow\b', q)))
             if parsed is None:
-                return 'Please tell me a time including AM or PM, like set an alarm for 6:30 AM.'
+                return 'Please tell me a clock time, like 6:30 or 6:30 PM.'
             days = _recurrence(q)
             tomorrow = bool(re.search(r'\btomorrow\b', q))
             if days and tomorrow:
@@ -222,7 +268,7 @@ class AlarmManager:
         """Advance due schedules and queue alarm(s) to ring."""
         now = now if now is not None else datetime.now()
         with self._lock:
-            if self._active and (now - self._active['started']).total_seconds() > 300:
+            if self._active and (now - self._active['started']).total_seconds() > 1800:
                 self._active = None
             ordered = sorted(self._alarms, key=lambda a: a['next_at'])
             changed = False
