@@ -10,6 +10,8 @@ import sam_clock
 import sam_alarms
 import sam_memory
 import sam_continuous_alarm
+import sam_control_agent
+import sys
 import hmac
 import json
 import logging
@@ -549,6 +551,7 @@ class StreamHandler(socketserver.BaseRequestHandler):
                     if length<1 or length>64:raise ValueError('Invalid firmware version frame')
                     sess.firmware=read_exact(s,length).decode('ascii','replace')
                     LOG.info('FIRMWARE VERIFIED: %s',sess.firmware)
+                    sam_control_agent.apply_led(sess)
                 elif cmd==b'B':
                     if ALARMS is not None and ALARMS._active is not None:
                         ALARMS.handle('stop alarm')
@@ -636,6 +639,7 @@ def main():
     LOG.info('Private LAN only: audio and voice replies are NOT encrypted')
     port=int(MODEL_CONFIG.get('port',8765));stream_port=int(MODEL_CONFIG.get('stream_port',8766))
     threading.Thread(target=alarm_loop,daemon=True,name='sam-alarm-scheduler').start()
+    sam_control_agent.start(sys.modules[__name__])
     listener=StreamServer(('0.0.0.0',stream_port),StreamHandler)
     threading.Thread(target=listener.serve_forever,daemon=True).start()
     LOG.info('Audio stream TCP 0.0.0.0:%d | Reply HTTP 0.0.0.0:%d',stream_port,port)
