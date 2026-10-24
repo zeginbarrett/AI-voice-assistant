@@ -20,4 +20,13 @@ The ES7210 and ES8311 **share BCLK and LRCLK**; the ESP32 provides master clocks
 
 The board needs **2.4 GHz Wi-Fi**. Music requires a FAT32 microSD card inserted before board boot. Do not change expander mux pins EXIO6/EXIO7—they have conflicting documentation and can interfere with USB/camera selection.
 
+
+## Orientation and lights
+
+The frosted translucent cover sits **on top** of the blue ESP32-S3 board. The **lower black cylinder contains the speaker**; do not mistake its base for a tripod socket. The product photo in the README is a visualization, not an engineering diagram.
+
+The seven WS2812 RGB LEDs use **GPIO38**. SAM automatically uses idle/listening/thinking/speaking colors, unless a user selects a manual LED preset in the Windows Control Center. The enhanced firmware accepts a versioned `J` command (mode, red, green, blue, brightness, speed) on the **existing authenticated PC-to-ESP32 TCP 8766 socket**. No secondary Wi-Fi access point, Bluetooth pairing, or audio pin reassignment is required.
+
+The firmware currently supports auto, off, solid, breathe, rainbow, disco, low-rate strobe, chase, pulse, sparkle, candle, ocean, party and meteor. Light commands require flashing firmware reporting `SAM-V5-HANDSFREE-MUSIC-LED1`; older boards keep their existing automatic colors until upgraded.
+
 References: [Waveshare wiki](https://www.waveshare.com/wiki/ESP32-S3-AUDIO-Board), [ESPHome board implementation](https://github.com/MichalZaniewicz/esphome-waveshare-esp32-s3-audio-va), [ESPHome ES7210 driver](https://github.com/esphome/esphome/blob/dev/esphome/components/es7210/es7210.cpp).
