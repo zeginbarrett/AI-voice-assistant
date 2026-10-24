@@ -121,13 +121,18 @@ def install(root):
     backup.mkdir(parents=True,exist_ok=True)
     for p in (brain,firmware):
         dst=backup/p.relative_to(root);dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,dst)
+    app_source = SRC/'app' if (SRC/'app').is_dir() else SRC/'windows'
+    ui_source = SRC/'panel_ui' if (SRC/'panel_ui').is_dir() else SRC/'windows'/'sam_panel_ui'
     for src,name in [
-        (SRC/'app'/'sam_control_agent.py','windows/sam_control_agent.py'),
-        (SRC/'app'/'sam_control_center.py','windows/sam_control_center.py')]:
-        dest=root/name;shutil.copy2(src,dest)
+        (app_source/'sam_control_agent.py','windows/sam_control_agent.py'),
+        (app_source/'sam_control_center.py','windows/sam_control_center.py')]:
+        dest=root/name
+        if src.resolve()!=dest.resolve():shutil.copy2(src,dest)
     ui=win/'sam_panel_ui';ui.mkdir(exist_ok=True)
-    for file in (SRC/'panel_ui').iterdir():
-        if file.is_file():shutil.copy2(file,ui/file.name)
+    for file in ui_source.iterdir():
+        if file.is_file():
+            dest=ui/file.name
+            if file.resolve()!=dest.resolve():shutil.copy2(file,dest)
     brain.write_text(newbrain,encoding='utf-8')
     firmware.write_text(newfirm,encoding='utf-8')
     (root/'START_SAM_CONTROL_CENTER.bat').write_text('@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset "SAM_PY="\r\nif exist "windows\\python_path.txt" set /p SAM_PY=<"windows\\python_path.txt"\r\nif defined SAM_PY if exist "%SAM_PY%" ("%SAM_PY%" "windows\\sam_control_center.py" & exit /b %errorlevel%)\r\npy -3 "windows\\sam_control_center.py"\r\nif errorlevel 1 (python "windows\\sam_control_center.py")\r\npause\r\n',encoding='utf-8')
