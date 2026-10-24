@@ -55,6 +55,9 @@ class MusicPlayer:
         self._worker = None
         self._lock = threading.RLock()
         self._generation = 0
+        self._pending_sequence = None
+        self._defer_play = False
+        self._audio_socket = None
 
     def bind(self, session):
         with self._lock:
@@ -121,8 +124,22 @@ class MusicPlayer:
             tokens=[x for x in re.findall(r'[a-z0-9]+',search) if x not in {'play','song','music','by','the','some','from'}]
             selection=[t for t in tracks if all(x in re.sub(r'[^a-z0-9]+',' ',t[1].lower()) for x in tokens)]
             if not selection:return f'I could not find {query} on the SD card. Try saying play music.'
-        self._new_sequence(selection)
-        return 'Playing ' + (Path(selection[0][1]).stem.replace('_',' ') if len(selection)==1 else f'{len(selection)} songs from the SD card') + '.'
+        # Start requested playback only after the spoken acknowledgement finishes.
+        if self._defer_play:
+            with self._lock: self._pending_sequence = list(selection)
+        else:
+            self._new_sequence(selection)
+        return ('Playing ' + Path(selection[0][1]).stem.replace('_',' ') + '.'
+                if len(selection) == 1 else 'Okay, loading the music now.')
+
+    def start_queued(self):
+        with self._lock:
+            queued = self._pending_sequence
+            self._pending_sequence = None
+        if queued:
+            self._new_sequence(queued)
+            return True
+        return False
 
     def _new_sequence(self, sequence):
         self.stop(silent=True)
@@ -138,55 +155,69 @@ class MusicPlayer:
             self._worker.start()
 
     def _run(self,generation,stop,paused):
+        interruptions=0
         try:
             while not stop.is_set():
                 with self._lock:
-                    if generation != self._generation or self.position>=len(self.sequence):break
+                    if generation != self._generation or self.position >= len(self.sequence): break
                     index,name=self.sequence[self.position]
                     session=self.session
                     self.current=name
+                if not session or not session.connected: break
                 LOG.info('MUSIC NOW PLAYING: %s',name)
-                if not session or not session.connected:break
-                try:self._play_one(session,index,stop,paused)
-                except Exception as exc: LOG.error('MUSIC ERROR %s: %s',name,exc)
-                if stop.is_set():break
+                try:
+                    self._play_one(session,index,stop,paused)
+                    interruptions=0
+                except (OSError, RuntimeError, ValueError) as exc:
+                    if stop.is_set(): break
+                    interruptions+=1
+                    LOG.warning('MUSIC STREAM INTERRUPTED: %s (%s); not skipping track',name,exc)
+                    if interruptions >= 3: break
+                    if stop.wait(min(2*interruptions,5)): break
+                    continue
+                if stop.is_set(): break
                 with self._lock:
                     if generation != self._generation: break
                     self.position+=1
         finally:
             with self._lock:
                 if generation == self._generation:
-                    self.playing=False; self.current=''
+                    self.playing=False
+                    self.current=''
                     LOG.info('MUSIC: stopped')
 
     def _play_one(self,session,index,stop,paused):
         ffmpeg=ffmpeg_path()
         with tempfile.TemporaryDirectory(prefix='sam_sdmp3_') as tmp:
             target=Path(tmp)/'song.mp3'
-            with self._get('/track/'+str(index),session,timeout=15) as resp, target.open('wb') as fd:
+            with self._get('/track/'+str(index),session,timeout=35) as resp, target.open('wb') as fd:
                 total=0
                 while not stop.is_set():
                     data=resp.read(65536)
-                    if not data:break
+                    if not data: break
                     total+=len(data)
-                    if total>MAX_MP3: raise RuntimeError('File exceeds 70 MB limit')
+                    if total > MAX_MP3: raise RuntimeError('File exceeds 70 MB limit')
                     fd.write(data)
             if stop.is_set() or target.stat().st_size < 100: return
             cmd=[ffmpeg,'-hide_banner','-loglevel','error','-i',str(target),'-vn',
                  '-f','s16le','-acodec','pcm_s16le','-ac','2','-ar','16000','pipe:1']
             proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+            audio=None
             try:
-                with socket.create_connection((session.ip,8771),timeout=6) as audio:
-                    audio.settimeout(8)
+                with socket.create_connection((session.ip,8771),timeout=8) as audio:
+                    audio.settimeout(30)
+                    with self._lock: self._audio_socket=audio
                     audio.sendall(('SAMAUDIO1 '+self.token+'\n').encode('ascii'))
                     while not stop.is_set():
-                        while paused.is_set() and not stop.is_set(): time.sleep(.08)
-                        if stop.is_set():break
+                        while paused.is_set() and not stop.is_set(): time.sleep(.06)
+                        if stop.is_set(): break
                         buf=proc.stdout.read(4096)
-                        if not buf:break
+                        if not buf: break
                         audio.sendall(buf)
             finally:
-                if proc.poll() is None:proc.kill()
+                with self._lock:
+                    if self._audio_socket is audio: self._audio_socket=None
+                if proc.poll() is None: proc.kill()
                 proc.wait(timeout=4)
 
     def stop(self,silent=False):
@@ -195,6 +226,11 @@ class MusicPlayer:
             self._generation+=1
             self.playing=False
             self.current=''
+            self._pending_sequence=None
+            sock=self._audio_socket
+        if sock is not None:
+            try: sock.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
         if not silent: LOG.info('MUSIC: stopped on request')
         return 'Music stopped.'
 
@@ -244,6 +280,9 @@ def parse_command(text: str, player: MusicPlayer):
     if re.search(r'\b(?:next|skip)(?:\s+(?:track|song|music))?\b',t):return player.next()
     if re.search(r'\b(?:previous|last)\s+(?:track|song)\b',t):return player.previous()
     if re.search(r'\b(?:what(?:\'s| is) playing|what song is this)\b',t):return player.describe()
-    m=re.search(r'\b(?:play|shuffle)\s+(.+)',t)
+    # Only commands that START with play/shuffle should control the music.
+    # In conversation, 'you play the actor' must remain ordinary dialogue.
+    t=re.sub(r'^(?:(?:hey|hi)\s+sam[,! ]*|please\s+)+','',t)
+    m=re.match(r'^(?:play|shuffle)\s+(.+)',t)
     if m:return player.play(m.group(1).strip(' .!?'))
     return None
