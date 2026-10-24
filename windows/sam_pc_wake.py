@@ -8,6 +8,8 @@ import sam_music
 import sam_voice
 import sam_clock
 import sam_alarms
+import sam_memory
+import sam_continuous_alarm
 import hmac
 import json
 import logging
@@ -40,12 +42,35 @@ _CHAT_HISTORY = []
 MODEL_CONFIG = {}
 MUSIC = None
 ALARMS = None
+MEMORY = None
+CONTINUOUS_ALARM = None
 
 PERSONA = ('You are SAM, an upbeat, capable, witty, intelligent female voice assistant. '
            'Speak in natural conversational English, usually 1-3 short sentences. '
            'You can have an extended natural conversation across several turns. Answer direct questions directly, including telling a joke when asked. '
            'Avoid markdown, emoji and stage directions. If unsure, say so. '
-           'Alarms are handled by the local SAM scheduler. Never claim an alarm is scheduled unless the scheduler confirms it.')
+           'Alarms are handled by the local SAM scheduler. Never claim an alarm is scheduled unless the scheduler confirms it. '
+           'Distinguish fictional scenes from the user speaking to you. Never imply a fictional scene is real. '
+           'When the user ends a story or roleplay, do not resume it unless explicitly requested. '
+           'Answer the current question rather than repeatedly suggesting an earlier topic.')
+
+
+def _scene_exit_requested(utterance):
+    """Explicitly stop ongoing fictional scenes, without deleting saved transcripts."""
+    q = re.sub(r'\s+', ' ', utterance.casefold()).strip(' .!?')
+    q = re.sub(r'^(?:(?:hey|hi)\s+sam[,! ]*|please\s+)+', '', q)
+    subject = r'(?:(?:the|our|this|that|a)\s+)?(?:(?:movie|fictional)\s+)?(?:scene|story|roleplay|role-play|movie|script)'
+    if re.search(r'^(?:cancel|stop|end|quit|drop|scrap|forget|abandon)\s+' + subject + r'\b', q):
+        return True
+    if re.search(r'^(?:we\s+are\s+no\s+longer\s+doing|we.re\s+done\s+with|'
+                 r'i.m\s+done\s+with|no\s+more)\s+' + subject + r'\b', q):
+        return True
+    if re.search(r'\b(?:out of character|back to normal conversation|back to real conversation)\b', q):
+        return True
+    if re.search(r'^forget (?:about )?(?:the )?(?:whole|entire) thing\b', q):
+        return any(re.search(r'\b(?:scene|script|story|roleplay|role-play|movie)\b',
+                             str(turn.get('content','')),re.I) for turn in _CHAT_HISTORY[-8:])
+    return False
 
 
 def model():
@@ -128,6 +153,13 @@ def is_wake(text):
 def ollama(prompt):
     global _CHAT_HISTORY
     messages = [{'role': 'system', 'content': PERSONA + '\n' + sam_clock.context()}] + _CHAT_HISTORY[-8:]
+    if MEMORY is not None:
+        try:
+            remembered=MEMORY.context(prompt)
+            if remembered:
+                messages[0]['content'] += '\n' + remembered
+        except Exception:
+            LOG.exception('MEMORY LOOKUP FAILED')
     messages.append({'role': 'user', 'content': prompt})
     body = {
         'model': MODEL_CONFIG['ollama_model'], 'messages': messages,
@@ -154,6 +186,10 @@ def tts(message):
 
 def response_for(text):
     """Route hardware/media commands locally and return (spoken_reply,followup)."""
+    if _scene_exit_requested(text):
+        _CHAT_HISTORY.clear()
+        LOG.info('SCENE: ended by explicit request; volatile dialogue cleared')
+        return 'Okay, the scene is over. What would you like to discuss?', True
     if ALARMS is not None:
         try:
             alarm_reply = ALARMS.handle(text)
@@ -163,11 +199,16 @@ def response_for(text):
         if alarm_reply is not None:
             return alarm_reply, True
     if MUSIC is not None:
-        local = sam_music.parse_command(text, MUSIC)
+        MUSIC._defer_play = True
+        try:
+            local = sam_music.parse_command(text, MUSIC)
+        finally:
+            MUSIC._defer_play = False
         if local is not None:
-            # Music must start after TTS; no open mic feeding its own speaker.
-            new_music=re.search(r'\b(?:play|shuffle)\s+', text, re.I) is not None
+            new_music = MUSIC._pending_sequence is not None
             return local, not new_music
+        if MUSIC.playing and re.fullmatch(r'\s*(?:stop|quiet|silence|turn it off)[.!? ]*', text, re.I):
+            return MUSIC.stop(), True
     clock_reply = sam_clock.reply_for(text)
     if clock_reply is not None:
         return clock_reply, True
@@ -198,6 +239,7 @@ class Session:
         self.connected=True
         self.reply=None
         self.is_alarm_reply=False
+        self._sam_music_auto_resume=False
         self.last_diag=0.0
         self.worker=threading.Thread(target=self.watch,daemon=True,name='sam-wake')
         self.worker.start()
@@ -252,6 +294,9 @@ class Session:
         for slot in range(4):wav_file('last_raw_slot%d.wav'%slot,four[:,slot])
 
     def awake(self,label,prefill=''):
+        if MUSIC is not None and MUSIC.playing:
+            MUSIC.pause()
+            self._sam_music_auto_resume=True
         with self.frames_lock:
             if self.state!='IDLE':return
             baseline=self.snapshot(2.4)
@@ -303,7 +348,10 @@ class Session:
             text=recognize(stereo[:,c])
             LOG.info('HEARD: %r',text)
             if not text:
-                self._speak_answer('',override='Could you repeat that?')
+                # Whisper often invents short repeated phrases from silence.
+                # Return to idle without speaking to the empty transcription.
+                LOG.info('SILENCE GUARD: no intelligible request')
+                self._recover()
                 return
             self._speak_answer(text)
         except Exception as exc:
@@ -312,8 +360,24 @@ class Session:
 
     def _speak_answer(self,text,override=None,alarm=False):
         try:
-            reply,followup=(override,True) if override else response_for(text)
+            if not override and MEMORY is not None:
+                try:
+                    special=sam_memory.memory_command(text,MEMORY)
+                except Exception:
+                    LOG.exception('MEMORY COMMAND FAILED')
+                    special='Sorry, I could not access my memory.'
+            else:
+                special=None
+            # Answer first, then save this exchange. This prevents an echo loop
+            # where the utterance becomes its own newly retrieved memory.
+            reply,followup=(override,True) if override else ((special,True) if special is not None else response_for(text))
             self.keep_followup=followup
+            if MEMORY is not None and not override and text:
+                try:
+                    MEMORY.record('user',text)
+                    MEMORY.record('assistant',reply)
+                except Exception:
+                    LOG.exception('MEMORY WRITE FAILED')
             LOG.info('HEARD: %r',text)
             LOG.info('SAM: %s',reply)
             audio_reply=tts(reply)
@@ -336,10 +400,19 @@ class Session:
         self.is_alarm_reply=False
         if MUSIC is not None:
             self.send(b'G' + bytes([MUSIC.volume]))
+            if self._sam_music_auto_resume and MUSIC.playing:
+                self._sam_music_auto_resume=False
+                MUSIC.resume()
         self.send(b'E')
 
     def close_reply(self):
         self.reply=None
+        if MUSIC is not None:
+            if MUSIC.start_queued():
+                self._sam_music_auto_resume=False
+            elif self._sam_music_auto_resume:
+                self._sam_music_auto_resume=False
+                if MUSIC.playing: MUSIC.resume()
         if self.is_alarm_reply:
             self.is_alarm_reply=False
             if MUSIC is not None:
@@ -395,6 +468,9 @@ class Session:
                         with self.frames_lock:self.state='IDLE';self.question.clear()
                         self.send(b'I')
                         LOG.info('Conversation idle; say Hey Sam when ready.')
+                        if self._sam_music_auto_resume:
+                            self._sam_music_auto_resume=False
+                            if MUSIC is not None and MUSIC.playing: MUSIC.resume()
             if state=='IDLE' and now-self.last_scan>=1.8:
                 self.last_scan=now
                 try:
@@ -474,7 +550,14 @@ class StreamHandler(socketserver.BaseRequestHandler):
                     sess.firmware=read_exact(s,length).decode('ascii','replace')
                     LOG.info('FIRMWARE VERIFIED: %s',sess.firmware)
                 elif cmd==b'B':
-                    sess.awake('K2 manual activation')
+                    if ALARMS is not None and ALARMS._active is not None:
+                        ALARMS.handle('stop alarm')
+                        if CONTINUOUS_ALARM is not None: CONTINUOUS_ALARM.stop()
+                    elif MUSIC is not None and MUSIC.playing:
+                        MUSIC.stop()
+                        LOG.info('MUSIC: stopped with K2 button')
+                    else:
+                        sess.awake('K2 manual activation')
                 elif cmd==b'D':
                     sess.close_reply()
                 else:
@@ -515,40 +598,28 @@ class HTTPHandler(BaseHTTPRequestHandler):
 
 
 def alarm_loop():
-    """Use the existing ESP32 reply path; do not require new firmware."""
+    """Sound continuous local alarm audio while a scheduled alarm is active."""
     while True:
         try:
             if ALARMS is not None:
                 ALARMS.poll()
-                if ALARMS.should_ring():
-                    with LOCK:
-                        sess=CURRENT
-                    ready=False
-                    if sess is not None and sess.connected:
-                        with sess.frames_lock:
-                            if sess.state in ('IDLE', 'LISTEN') and not sess.speech_started:
-                                sess.state='THINK'
-                                sess.question.clear()
-                                ready=True
-                    if ready:
-                        label=ALARMS.mark_ring()
-                        if label is not None:
-                            if MUSIC is not None and MUSIC.playing:
-                                MUSIC.pause()
-                            spoken=f'Alarm! {label}. Say stop alarm or snooze for 10 minutes.'
-                            threading.Thread(target=sess._speak_answer,
-                                args=('',), kwargs={'override':spoken, 'alarm':True},
-                                daemon=True, name='sam-alarm-alert').start()
+                with LOCK:
+                    sess=CURRENT
+                if CONTINUOUS_ALARM is not None:
+                    CONTINUOUS_ALARM.ensure(ALARMS,sess,MUSIC)
         except Exception as exc:
             LOG.exception('ALARM LOOP ERROR: %s',exc)
-        time.sleep(1)
+        time.sleep(0.25)
 
 
 def main():
-    global MODEL_CONFIG, MUSIC, ALARMS
+    global MODEL_CONFIG, MUSIC, ALARMS, MEMORY, CONTINUOUS_ALARM
     settings=ROOT/'settings.json'
     if not settings.exists():raise RuntimeError('Missing settings.json; run RUN_SAM_TEST.bat')
     MODEL_CONFIG=json.loads(settings.read_text(encoding='utf-8'))
+    MEMORY=sam_memory.PersistentMemory(sam_memory.default_path())
+    LOG.info('PERSISTENT MEMORY: %s',MEMORY.path)
+    CONTINUOUS_ALARM=sam_continuous_alarm.ContinuousAlarmAudio()
     if not MODEL_CONFIG.get('token') or not MODEL_CONFIG.get('ollama_model'):
         raise RuntimeError('Missing authentication or Ollama model in settings.json')
     MUSIC=sam_music.MusicPlayer(MODEL_CONFIG['token'])
