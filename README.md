@@ -7,13 +7,12 @@
 ## Meet the hardware
 
 <p align="center">
-  <a href="https://www.waveshare.com/product/mcu-tools/development-boards/esp32-s3-audio-board.htm">
-    <img src="https://www.waveshare.net/photo/development-board/ESP32-S3-AUDIO-Board/ESP32-S3-AUDIO-Board-1.jpg" alt="Waveshare ESP32-S3-AUDIO-Board upright, with the frosted circuit-board cover on top and black speaker enclosure below" width="470">
-  </a>
+  <img src="docs/images/sam-hardware.jpg" alt="SAM smart speaker with frosted top covering the ESP32-S3 board and a black speaker enclosure underneath" width="520">
 </p>
-<p align="center"><sub>Correct upright orientation: translucent circuit-board cover and microphones on top; black speaker housing below. Image: <a href="https://www.waveshare.com/product/mcu-tools/development-boards/esp32-s3-audio-board.htm">Waveshare official product photo</a>.</sub></p>
 
-The board combines dual microphones, speaker output, a programmable RGB light ring and microSD storage. A Windows PC performs speech recognition, AI and voice synthesis. See the [Waveshare board reference](https://docs.waveshare.com/ESP32-S3-AUDIO-Board) for additional photos and the exposed PCB.
+<p align="center"><sub>Illustrative rendering based on the Waveshare ESP32-S3-AUDIO-Board. The black lower cylinder houses the speaker; there is no tripod mount.</sub></p>
+
+The speaker combines dual microphones, a built-in audio codec, seven RGB LEDs on GPIO 38, microSD storage, and a lower speaker enclosure. The Windows PC performs speech recognition, AI processing, and voice synthesis. For board and wiring details, see the [Waveshare documentation](https://docs.waveshare.com/ESP32-S3-AUDIO-Board).
 
 ## How SAM works
 
@@ -56,9 +55,23 @@ flowchart TB
 - **Voice music controls:** play, shuffle, skip, pause, resume and stop.
 - **Voice volume controls:** *“volume up”*, *“volume down”*, *“set volume to 40 percent”*, *“mute”* and *“unmute”*.
 
+## Windows Control Center
+
+SAM includes a Windows Control Center with a dedicated Edge/Chrome app window. It runs on your existing PC and local Wi-Fi network; **no ESP32 hotspot is required**. Its local control agent is authenticated and bound to `127.0.0.1:8781`, with the UI on `127.0.0.1:8780`.
+
+- **Setup & installation:** Start SAM, run the existing installation/firmware-flash wizard, choose a voice, or install the optional music decoder.
+- **Music & volume:** Play or search microSD MP3s, skip, stop, and control volume.
+- **Alarms & memory:** Manage local alarms and search archived conversations.
+- **Voice/model:** Switch configured speech engine and Ollama model. Install the requested voice engine/model separately before selecting it.
+- **LED Studio:** Seven-pixel ring effects with color, speed and brightness controls: automatic activity colors, off, solid, breathe, rainbow, disco, low-frequency strobe, chase, pulse, sparkle, candle, ocean, party, and meteor.
+
+**Installation:** Run `INSTALL_CONTROL_CENTER.bat`, then launch `START_SAM_CONTROL_CENTER.bat` from the SAM folder. The installer backs up the existing Windows bridge and firmware source before patching it. Flash the LED-enabled ESP32 firmware **once** via Setup; older firmware cannot accept LED commands. Normal playback and microphone networking continue over their existing ports. Flashing temporarily interrupts SAM and requires the USB-connected board.
+
+The desktop UI uses a browser's dedicated app-window mode, not a separately compiled EXE. LED effects and Windows flows have been tested in software; verify the flashed board's behavior before relying on it. Memory databases, settings, access tokens and Wi-Fi credentials remain private and must not be committed.
+
 ## Voice alarms (Windows-side)
 
-SAM's alarm scheduler uses the Windows PC clock, **not an LLM promise**. Alarms are stored in `windows/sam_alarms.json` (gitignored) and survive restarts. At the scheduled time, SAM plays a three-tone chime and a spoken alarm through the existing ESP32 reply path. She repeats the chime and message about every 20 seconds for up to five minutes, leaving gaps to hear voice commands.
+SAM's alarm scheduler uses the Windows PC clock, **not an LLM promise**. Alarms are stored in `windows/sam_alarms.json` (gitignored) and survive restarts. At the scheduled time, SAM plays a continuous two-tone alarm through the existing ESP32 PCM audio path while an alarm is active, stopping on dismiss or snooze, with a safety cutoff.
 
 Example things to say:
 
@@ -71,7 +84,7 @@ Example things to say:
 - “Cancel alarm number one.” or “Cancel all alarms.”
 - When the alarm rings: “Stop alarm.” or “Snooze for ten minutes.”
 
-A scheduled alarm is only confirmed after being saved. Ambiguous clock times require AM or PM. Alarm sounds are delivered through the PC's connected speaker board; the PC **must remain awake and SAM must be running**. If the board disconnects, the scheduler attempts delivery after reconnecting; old one-time alarms more than 30 minutes overdue are skipped. The alarm chime uses the normal speaker stream, without changing ESP32 firmware. Alarm notifications are not sent to a phone, and this is not a general-purpose reminders/calendar service. Test the alarm before relying on it for important wakeups.
+A scheduled alarm is only confirmed after being saved. If AM/PM is missing, SAM uses the next matching occurrence and announces the chosen time. Alarm sounds are delivered through the PC's connected speaker board; the PC **must remain awake and SAM must be running**. If the board disconnects, the scheduler attempts delivery after reconnecting; old one-time alarms more than 30 minutes overdue are skipped. The alarm chime uses the normal speaker stream, without changing ESP32 firmware. Alarm notifications are not sent to a phone, and this is not a general-purpose reminders/calendar service. Test the alarm before relying on it for important wakeups.
 
 ## Choose SAM's voice
 
