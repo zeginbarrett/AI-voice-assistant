@@ -73,6 +73,8 @@ class Handler(BaseHTTPRequestHandler):
         if p not in ('/index.html','/app.js','/style.css','/sam_hardware.png'):
             return self.write(404,b'Not found','text/plain')
         src=UI/p.lstrip('/')
+        if not src.is_file() and p=='/sam_hardware.png':
+            src=ROOT/'docs'/'images'/'sam-hardware.jpg'
         if not src.is_file():return self.write(404,b'UI file missing','text/plain')
         return self.write(200,src.read_bytes(),MIME.get(src.suffix,'application/octet-stream'))
     def do_POST(self):
