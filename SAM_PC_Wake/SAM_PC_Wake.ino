@@ -24,7 +24,7 @@ static constexpr uint8_t EXP=0x20, MIC=0x40, DAC=0x18;
 static constexpr int RATE=16000, RGB=38, NUM_LEDS=7;
 static constexpr uint16_t FRAMES_PER_PACKET=512;
 static constexpr uint32_t LOG_INTERVAL=6000;
-static constexpr const char *FW_VER="SAM-V5-HANDSFREE-MUSIC";
+static constexpr const char *FW_VER="SAM-V5-HANDSFREE-MUSIC-LED1";
 I2SClass audio;
 Adafruit_NeoPixel ring(NUM_LEDS,RGB,NEO_RGB+NEO_KHZ800);
 WiFiClient upstream;
@@ -269,7 +269,69 @@ bool initSpeaker(){
 void paint(uint8_t r,uint8_t g,uint8_t b){
   for(int i=0;i<NUM_LEDS;i++)ring.setPixelColor(i,ring.Color(r,g,b));ring.show();
 }
+
+// SAM LED effects: 7 WS2812 GPIO38. PC sends 'J' plus six bytes:
+// mode (0 auto, 1 off, 2 solid, 3 breathe, 4 rainbow, 5 disco,
+// 6 strobe, 7 chase, 8 pulse, 9 sparkle, 10 candle, 11 ocean,
+// 12 party, 13 meteor), R, G, B, brightness 0-100, speed 0-100.
+static uint8_t samLedMode=0,samLedR=20,samLedG=110,samLedB=255,samLedBright=75,samLedSpeed=45;
+static inline uint8_t samClamp(int n){return (uint8_t)constrain(n,0,255);}
+static void samPixel(int idx,int r,int g,int b){
+  ring.setPixelColor(idx,ring.Color(samClamp(r),samClamp(g),samClamp(b)));
+}
+static void samLeds(){
+  uint32_t t=millis();
+  float speed=(float)max(1,(int)samLedSpeed);
+  float cycles=(t/1000.0f)*(0.25f+speed/65.0f);
+  ring.setBrightness((uint8_t)constrain((int)samLedBright*255/100,0,255));
+  uint8_t r=samLedR,g=samLedG,b=samLedB;
+  if(samLedMode==1){ring.clear();ring.show();return;}
+  if(samLedMode==2){paint(r,g,b);return;}
+  if(samLedMode==3 || samLedMode==8 || samLedMode==11){
+    float breath=.18f+.82f*(.5f+.5f*sinf(6.283185f*cycles));
+    if(samLedMode==11){r=0;g=110;b=255;}
+    paint((uint8_t)(r*breath),(uint8_t)(g*breath),(uint8_t)(b*breath));return;
+  }
+  if(samLedMode==6){
+    uint32_t period=(uint32_t)(700-(samLedSpeed*2));
+    if(period<500)period=500;
+    if(t%period < period/2)paint(r,g,b);else paint(0,0,0);
+    return;
+  }
+  if(samLedMode==10){
+    uint8_t intensity=(uint8_t)random(90,220);
+    paint(intensity,intensity/3,4);return;
+  }
+  for(int i=0;i<NUM_LEDS;i++){
+    if(samLedMode==4 || samLedMode==12){
+      uint16_t h=(uint16_t)((i*65536UL/NUM_LEDS)+(uint32_t)(cycles*10500))&65535;
+      ring.setPixelColor(i,ring.gamma32(ring.ColorHSV(h,255,255)));
+    }else if(samLedMode==5){
+      uint32_t hue=(uint32_t)((t/(uint32_t)max(40,650-(int)samLedSpeed*5))+i*3)*20011;
+      ring.setPixelColor(i,ring.gamma32(ring.ColorHSV((uint16_t)hue,245,255)));
+    }else if(samLedMode==7){
+      int idx=((uint32_t)(cycles*2))%NUM_LEDS;
+      if(i==idx)samPixel(i,r,g,b);
+      else if(i==(idx+NUM_LEDS-1)%NUM_LEDS)samPixel(i,r/4,g/4,b/4);
+      else samPixel(i,0,0,0);
+    }else if(samLedMode==9){
+      bool flash=(random(0,100)<18);
+      samPixel(i,flash?r:0,flash?g:0,flash?b:0);
+    }else if(samLedMode==13){
+      int idx=((uint32_t)(cycles*2))%NUM_LEDS;
+      int dist=(idx+NUM_LEDS-i)%NUM_LEDS;
+      int divisor=dist==0?1:dist==1?3:dist==2?8:30;
+      samPixel(i,r/divisor,g/divisor,b/divisor);
+    }else{
+      samPixel(i,r,g,b);
+    }
+  }
+  ring.show();
+}
+
 void tickLeds(){
+  if(samLedMode!=0){if(millis()-lastLed<45)return;lastLed=millis();samLeds();return;}
+  ring.setBrightness(80);
   if(millis()-lastLed<45)return;
   lastLed=millis();
   uint8_t a=(uint8_t)(15+100*(0.5f-0.5f*cosf(6.2831853f*((millis()%2500)/2500.0f))));
@@ -409,6 +471,14 @@ void processCommands(){
       uint8_t value=75;
       if(upstream.readBytes((char*)&value,1)==1){speakerVolume=value>100?100:value;
         Serial.printf("[VOLUME] output set to %u%%\n",speakerVolume);
+      }
+    }
+    else if(cmd=='J'){
+      uint8_t data[6]={0,0,0,0,0,0};
+      if(upstream.readBytes((char*)data,6)==6 && data[0]<=13 && data[4]<=100 && data[5]<=100){
+        samLedMode=data[0];samLedR=data[1];samLedG=data[2];samLedB=data[3];
+        samLedBright=data[4];samLedSpeed=data[5];
+        Serial.printf("[LED] mode=%u brightness=%u speed=%u\n",samLedMode,samLedBright,samLedSpeed);
       }
     }
     else if(cmd=='I')phase=IDLE;
